@@ -1,4 +1,4 @@
-﻿# Simple TFTP Server in PowerShell
+# Simple TFTP Server in PowerShell
 # Einfache Implementierung eines TFTP-Servers in PowerShell
 # Dieser TFTP-Server unterstützt nur WRQ (Write Request) und DATA-Pakete.
 # Er kann keine RRQ (Read Request) verarbeiten.
@@ -18,7 +18,6 @@
 
 # Prepare Assembly
 Add-Type -AssemblyName System.Net
-Add-Type -AssemblyName System.Net.Sockets
 Add-Type -AssemblyName System.IO
 
 # Sicherstellen, dass Umlaute korrekt verarbeitet werden
@@ -41,8 +40,9 @@ $WorkingDirectory = $ScriptDirectory
 # Objekte für den TFTP-Server und Endpunkt erstellen
 $UdpClient = New-Object System.Net.Sockets.UdpClient $Port
 $Endpoint = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0)
+$UdpClient.Client.ReceiveTimeout = 5000 # 5 Sekunden Timeout
 
-Write-Host "TFTP-Server läuft auf Port $Port und unterstützt nur Schreibanforderungen (WRQ), keine Leseanforderungen (RRQ). Beenden mit Q ..."
+Write-Host "TFTP-Server läuft auf Port $Port und unterstützt nur Schreibanforderungen (WRQ), keine Leseanforderungen (RRQ). Warte 5 Sekunden auf Anfragen..."
 
 # Variable zur Steuerung der Schleife
 $keepRunning = $true
@@ -64,13 +64,6 @@ try {
     # Empfange Daten vom Client (Blockieren)
     $ReceiveBytes = $UdpClient.Receive([ref]$Endpoint)
 
-    # Überprüfen, ob die Taste 'q' gedrückt wurde
-    if ([Console]::KeyAvailable -and [Console]::ReadKey($true).Key -eq 'Q') {
-        Write-Host "Taste 'q' erkannt. Beende den Server..."
-        $keepRunning = $false
-        break
-    }
-
     # Konvertiere die empfangenen Bytes in ASCII-Text
     $AsciiText = [System.Text.Encoding]::ASCII.GetString($ReceiveBytes)
 
@@ -81,7 +74,7 @@ try {
     
     # Switch basierend auf Opcode
     switch ($Opcode) {
-      0x01 {
+      $TFTP_OPCODE_RRQ {
         # RRQ
         Write-Host "RRQ-Anforderung empfangen von $($Endpoint.Address):$($Endpoint.Port)"
         Write-Host "Dieser TFTP-Server unterstützt keine Leseanforderungen (RRQ)."
@@ -89,7 +82,7 @@ try {
         continue
       }
       
-      0x02 {
+      $TFTP_OPCODE_WRQ {
         # WRQ
 
         # Prüfen, ob bereits eine WRQ-Anforderung aktiv ist
@@ -111,13 +104,12 @@ try {
           # Fehlernachricht als Byte Array
           $errorMessage = "Bereits eine WRQ-Anforderung aktiv." # ASCII
           $arrayErrorMessage = [System.Text.Encoding]::ASCII.GetBytes($errorMessage)
-          $errorMessageLength = $arrayErrorMessage.Length
           
           # Byte Array für ERROR-Paket erstellen
           $array = $arrayOpcode + $arrayErrorCode + $arrayErrorMessage + [byte]0
           
           # Fehlerantwort senden
-          $UdpClient.Send($errorBytes, $errorBytes.Length, $Endpoint)
+          $UdpClient.Send($array, $array.Length, $Endpoint)
           Write-Host "Fehlerantwort gesendet an $($Endpoint.Address):$($Endpoint.Port)"
           
           continue
@@ -199,7 +191,7 @@ try {
         # Dateiempfang aktivieren
         $fileReceivingMode = $true
       }
-      0x03 {
+      $TFTP_OPCODE_DATA {
         # Wenn $fileReceivingMode nicht gesetzt ist, dann ist es ein Fehler
         if (-not $fileReceivingMode) {
           Write-Host "DATA-Paket empfangen, aber kein WRQ aktiv. Ignoriere."
@@ -219,13 +211,12 @@ try {
           # Fehlernachricht als Byte Array
           $errorMessage = "Keine WRQ-Anforderung aktiv." # ASCII
           $arrayErrorMessage = [System.Text.Encoding]::ASCII.GetBytes($errorMessage)
-          $errorMessageLength = $arrayErrorMessage.Length
           
           # Byte Array für ERROR-Paket erstellen
           $array = $arrayOpcode + $arrayErrorCode + $arrayErrorMessage + [byte]0
           
           # Fehlerantwort senden
-          $UdpClient.Send($errorBytes, $errorBytes.Length, $Endpoint)
+          $UdpClient.Send($array, $array.Length, $Endpoint)
           Write-Host "Fehlerantwort gesendet an $($Endpoint.Address):$($Endpoint.Port)"
 
           continue
@@ -248,7 +239,7 @@ try {
         }
 
         $data = $ReceiveBytes[4..($ReceiveBytes.Length - 1)]
-        $dataLength = $data.Length
+        
         $numBlocks = [math]::Ceiling($fileSize / $blockSize)
         
 
@@ -282,11 +273,11 @@ try {
           break
         }        
       }
-      0x04 {
+      $TFTP_OPCODE_ACK {
         # ACK
         Write-Host "ACK-Paket empfangen von $($Endpoint.Address):$($Endpoint.Port)"
       }
-      0x05 {
+      $TFTP_OPCODE_ERROR {
         # ERROR
         Write-Host "ERROR-Paket empfangen von $($Endpoint.Address):$($Endpoint.Port)"
       }
@@ -313,8 +304,8 @@ Write-Host "TFTP-Server beendet."
 # SIG # Begin signature block
 # MIIdIQYJKoZIhvcNAQcCoIIdEjCCHQ4CAQExCzAJBgUrDgMCGgUAMGkGCisGAQQB
 # gjcCAQSgWzBZMDQGCisGAQQBgjcCAR4wJgIDAQAABBAfzDtgWUsITrck0sYpfvNR
-# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUZ67PW0d2HRwQ++yevW3g6cO9
-# bFGgghcgMIIEGTCCAwGgAwIBAgIQNVooowG0K5pH3/ejj6JFbTANBgkqhkiG9w0B
+# AgEAAgEAAgEAAgEAAgEAMCEwCQYFKw4DAhoFAAQUlBu47S+iZEmm/nMFk9VJjYRM
+# VY+gghcgMIIEGTCCAwGgAwIBAgIQNVooowG0K5pH3/ejj6JFbTANBgkqhkiG9w0B
 # AQsFADCBkDEcMBoGA1UECgwTUHJpdmF0ZSBEZXZlbG9wbWVudDELMAkGA1UEBwwC
 # REExCzAJBgNVBAgMAkhFMQswCQYDVQQGEwJERTEkMCIGCSqGSIb3DQEJARYVbm8u
 # bWFpbEBsb2NhbGhvc3Qub3JnMSMwIQYDVQQDDBpEYW5ueU1hbnVhbCBIZWxwZXIg
@@ -443,28 +434,28 @@ Write-Host "TFTP-Server beendet."
 # cmcxIzAhBgNVBAMMGkRhbm55TWFudWFsIEhlbHBlciBTY3JpcHRzAhA1WiijAbQr
 # mkff96OPokVtMAkGBSsOAwIaBQCgeDAYBgorBgEEAYI3AgEMMQowCKACgAChAoAA
 # MBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisGAQQBgjcCAQsxDjAMBgor
-# BgEEAYI3AgEVMCMGCSqGSIb3DQEJBDEWBBQbsG08PakWkYr0ZMUnX7k6Q1LDwDAN
-# BgkqhkiG9w0BAQEFAASCAQDVpJXHy5/pXiPaDUDkE7KBvuksQEZJrCDnKT7NSVsO
-# HK0FsEe78Yu6FKIBapERwMbp3+IZCeCpZwWWXoAOF7TyBHzkXb9+NHCOGrNM0g6Y
-# 7UZqQNpO21SyQJFWcs9fdEyJv1a3d/KAkRK4WB0lxX9mVjyAds28NjsFWNkb09CH
-# PQ4RrOlz8w4mCP7JuzUMZpF7sILHZrmGa6yFBu0ZLQrdDZ9Vrbdg+bWWV/DV6QNf
-# lTYcv4A3sk5n/NeeVe+NfslSM+/MtiqqjYctWpIY88UGoZ1abRImlK/TdOJSxJYY
-# PS9Jg1EEukhjllHkvSm+j7FNgV1egGc7CzVBqXyAVXAuoYIDIDCCAxwGCSqGSIb3
+# BgEEAYI3AgEVMCMGCSqGSIb3DQEJBDEWBBROy4r8HvyXzJtt0OdNS5ddmyYIDDAN
+# BgkqhkiG9w0BAQEFAASCAQCLOwsCzmqTLK+Luo4p24VMVShshNWPtuRX3M0sP/4c
+# yv5/zVShSJfSTOYB4AEhJbxRsAnM0HVJHNwkp6sZBuV5epV+sZXBDCkcUhkwz6rz
+# +Wa6rO9rdNImvGt+gJTAnkWEcuMpUlLpU49PgGb3Ef0Qk9/NGY12d4jTgyUmqXIt
+# a9QAoMTsFO3ZUK3i+QWMAY4Oq7fGUh1evNHitGshEQCcsZcKNUtxqy5k+pWjxQJI
+# 9XGIpagksI2NpwLg2LLaVzp81nKRLCtLAieXqKiHYFDIfa4J5q6VZmvX98NPuPek
+# zDWyNSxQZ4EgunulDKqtbFqegg/dyTmcdICQfiA4baqqoYIDIDCCAxwGCSqGSIb3
 # DQEJBjGCAw0wggMJAgEBMHcwYzELMAkGA1UEBhMCVVMxFzAVBgNVBAoTDkRpZ2lD
 # ZXJ0LCBJbmMuMTswOQYDVQQDEzJEaWdpQ2VydCBUcnVzdGVkIEc0IFJTQTQwOTYg
 # U0hBMjU2IFRpbWVTdGFtcGluZyBDQQIQC65mvFq6f5WHxvnpBOMzBDANBglghkgB
 # ZQMEAgEFAKBpMBgGCSqGSIb3DQEJAzELBgkqhkiG9w0BBwEwHAYJKoZIhvcNAQkF
-# MQ8XDTI1MDUxNDE0NTM1M1owLwYJKoZIhvcNAQkEMSIEIOpdjawMfTT9SKczC8UW
-# tXTrkPXHDHO7V68wdX4trkSgMA0GCSqGSIb3DQEBAQUABIICAC7fW4b3uF5wQbbi
-# O0tBr9fs29iCBlFVrS4GTBBiabhJm0D6FW6H49wRLlERlbsjFTrGTq1ggil+7WAU
-# 6wfkmzRQGRnck9QraTXzGom6MojO+BhU9UjgmX8r1JbhRky4Ss3QU0zAyLP/4FIS
-# EMC6ulo+Hl2idxjPAoO6uE2t6EwR2R+FDnFgXSPn6Hv5AtUj25VWM5M0ghoaCTLE
-# w/bgx9/jJHlD+hOaUS8olxOXIkZih/42DHGZZbu2U7SK07PJv24cavk/XoTa6r2T
-# BkgvqI/BEb+0//VtLSayKH9TQOc41fD4Xa8ixVtYBCsuGTnW+FjvTCq2v8CJGscj
-# rB1kZJg5teSa+FciYeUK6huUN9vjUG9yetAnAc8dl5Yl4Fj4EPRdHYcnci4G44jE
-# VgwmgFh/dCpnscaExNUmVmdzFTZMIgugMS+Ed7wuzBexdsS48fOkAep35PBV4toE
-# SuERqm/9hjhwKryUhi2W/s52q6WimNlleJNUSm+GjumP3TnHpYb40Jfngb+ZPkUI
-# IDgPTD27hnwkIZ13d/Rp548/X8hUinaOkrIYuQtdiQ55XmPbC3Pi/6ya6kb24QOU
-# nebyuO7J41bYtG2VvdyVbsLw5twuoWfvI8iTkTnd5gGsa+TfxP9C4Q7cUJSrSMER
-# csGkqr4rlvmAJRlXqvJiUtcNq8TF
+# MQ8XDTI1MDUxNDE1MjExMVowLwYJKoZIhvcNAQkEMSIEIIckyNX8N39buMoxgLwr
+# v9Yys9GwaGlvQ9ld1rhDx0i0MA0GCSqGSIb3DQEBAQUABIICACvw/gK6Fx34SBde
+# qk4l19iyIWWNN59TpjZ55zs/A41yXNu3QRi0BPHKD06NVO6c2/c4IPMQAZtbU+AU
+# 5exPd7D4kI89EIErdUIVWS2kzLYeTQvD+BkME2q2Eo/kMDUFt3tLXrP0wfqQ43Pk
+# cK4V+e1Pmd9EWcRdWr/LjsuqwWDgp7Hy9PAIII2Gi+N8lsKmuFIipt38Fc/X7v2X
+# M7Q7FsziaChxSvpuaT9zuuNeI+h9YB8mbZZoYLG6c5jhpxXPRlYmjQUGU1FzmKsa
+# XoQ6yWNtNHCvjEYoQs84yp/5dX8kJWXYQlBal4SrgUyIY8yWRFXgZskUjSPtRdkU
+# 9dlHlHsEsJLgkR0gAw77QYqJn2crZ2R0WKYbbXfT5q24PyMiVjIxPc9E2ZzeCh4+
+# TkqiJBaJ8dEzGwzXCH5y+hrJCE2PosLduNF8aW43C+TlHXr1ebLzPWXro+q0YYrn
+# 6Sn8ikucX6p7LkQJFbxQGUiZ7NL+pbILAELu9pcW/ACA8XVIzM0O4tGfaLhewfkc
+# MjnQvvrAwX//QxkWtWs2e34QyqIU6gnkWhZLAibdtgpYC+04xU1FvKmo0StJqu9W
+# JSiJamQUtcag8YfSoxQUAW/Z/DkgeQhE4dGFvr9CnDHI5SQkA7Nll/rnXhhMpuH6
+# 2A82hQ17yijH8z1jIFyMDQCnWyOD
 # SIG # End signature block
